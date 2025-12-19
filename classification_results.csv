@@ -1,8 +1,0 @@
-image_path,top1_label,top1_prob,topk
-obrazy/metal/m1.jpg,zawór,0.197,zawór:0.197; śruba:0.146; sprężyna:0.133
-obrazy/metal/m2.webp,zawór,0.156,zawór:0.156; sprężyna:0.144; nakrętka:0.138
-obrazy/metal/m3.jpg,zawór,0.199,zawór:0.199; śruba:0.144; łożysko:0.125
-obrazy/metal/m4.jpg,zawór,0.170,zawór:0.170; śruba:0.140; sprężyna:0.139
-obrazy/metal/m5.webp,zawór,0.166,zawór:0.166; śruba:0.133; sprężyna:0.132
-obrazy/metal/m6.webp,zawór,0.172,zawór:0.172; śruba:0.131; łożysko:0.131
-obrazy/metal/m7.jpg,zawór,0.179,zawór:0.179; nakrętka:0.147; śruba:0.136
