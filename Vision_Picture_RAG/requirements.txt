@@ -1,0 +1,9 @@
+SQLAlchemy
+psycopg2-binary
+pgvector[sqlalchemy]
+# Embedding / LLM dependencies
+sentence-transformers
+transformers
+accelerate
+torch
+Pillow
