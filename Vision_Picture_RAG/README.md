@@ -47,6 +47,12 @@ result = rag_search_metal_parts(
 print(result["report"])
 ```
 
+### Nowy moduł: Qwen Image Verifier (vision QA)
+1) Zależności: `pip install -r requirements.txt`
+2) Uruchom: `python qwen_image_verifier.py --image obrazy/metal/PRZYKŁAD.jpg --claim "Opis części / oczekiwany element"`
+3) Wynik: JSON `{verdict, confidence, reason, raw}` weryfikujący zgodność obrazu z opisem.
+Plik: [qwen_image_verifier.py](qwen_image_verifier.py)
+
 ---
 
 ## 🏗️ Architektura Systemu

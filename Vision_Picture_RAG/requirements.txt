@@ -3,7 +3,8 @@ psycopg2-binary
 pgvector[sqlalchemy]
 # Embedding / LLM dependencies
 sentence-transformers
-transformers
+# Qwen2-VL wymaga nowszego transformers
+transformers>=4.40.0
 accelerate
 # PyTorch z obsługą CUDA (dla GPU)
 torch>=2.0.0
@@ -12,3 +13,6 @@ torchvision>=0.15.0
 Pillow
 # Dodatkowe przyspieszenie
 bitsandbytes  # Optymalizacja modeli na GPU
+qwen-vl-utils>=0.0.8
+timm>=0.9.8
+einops

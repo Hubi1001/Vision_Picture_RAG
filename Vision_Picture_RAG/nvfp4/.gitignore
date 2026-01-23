@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+
+# Environment variables
+.env
+
+# Output models
+output_models/
+
+# IDE
+.vscode/
+.idea/
+
+# Models
+*.bin
+*.gguf
+*.safetensors
+
+# Logs
+*.log
