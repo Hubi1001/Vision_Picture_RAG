@@ -2,15 +2,18 @@
 """
 Moduł do wyszukiwania ofert części metalowych w internecie.
 Obsługuje wyszukiwanie przez Google, Allegro, Amazon i inne platformy e-commerce.
+Obsługuje również wyszukiwanie odwrotne obrazem (reverse image search).
 """
 
 from __future__ import annotations
 
 import json
 import urllib.parse
+import base64
 from typing import List, Dict, Optional
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 import time
 
 # Opcjonalne importy do web scrapingu i API
@@ -243,6 +246,191 @@ class OfferFinder:
                 print(f"⚠ Błąd tworzenia linku Google: {e}")
 
         return offers[:max_results]
+
+    # ===== REVERSE IMAGE SEARCH - Wyszukiwanie odwrotne obrazem =====
+    
+    def reverse_image_search_google(self, image_path: str) -> List[OnlineOffer]:
+        """
+        Wyszukiwanie odwrotne obrazem przez Google Lens.
+        Generuje link do przesłania obrazu do Google Lens.
+        """
+        offers = []
+        try:
+            # Google Lens - bezpośredni link do wyszukiwania
+            # Użytkownik musi ręcznie załadować obraz przez interfejs
+            url = "https://lens.google.com/uploadbyurl"
+            
+            offer = OnlineOffer(
+                title="🔍 Google Lens - Wyszukaj podobne obrazy",
+                url="https://lens.google.com/",
+                source="google_lens",
+                seller="google.com",
+                description=f"Otwórz Google Lens i przeciągnij obraz: {Path(image_path).name}",
+                timestamp=datetime.now().isoformat(),
+            )
+            offers.append(offer)
+            
+            # Google Images reverse search
+            url_images = "https://images.google.com/"
+            offer2 = OnlineOffer(
+                title="🖼️ Google Images - Wyszukaj obrazem",
+                url=url_images,
+                source="google_images",
+                seller="google.com",
+                description="Kliknij ikonę aparatu i załaduj obraz, aby znaleźć źródło",
+                timestamp=datetime.now().isoformat(),
+            )
+            offers.append(offer2)
+            
+        except Exception as e:
+            print(f"⚠ Błąd Google Lens: {e}")
+        
+        return offers
+    
+    def reverse_image_search_yandex(self, image_path: str) -> List[OnlineOffer]:
+        """
+        Wyszukiwanie odwrotne przez Yandex Images.
+        Yandex jest bardzo dobry w znajdowaniu źródeł obrazów produktów.
+        """
+        offers = []
+        try:
+            url = "https://yandex.com/images/search?rpt=imageview"
+            
+            offer = OnlineOffer(
+                title="🔎 Yandex Images - Wyszukaj źródło obrazu",
+                url=url,
+                source="yandex",
+                seller="yandex.com",
+                description=f"Yandex jest świetny do znajdowania źródeł obrazów produktów. Załaduj: {Path(image_path).name}",
+                timestamp=datetime.now().isoformat(),
+            )
+            offers.append(offer)
+            
+        except Exception as e:
+            print(f"⚠ Błąd Yandex: {e}")
+        
+        return offers
+    
+    def reverse_image_search_tineye(self, image_path: str) -> List[OnlineOffer]:
+        """
+        TinEye - specjalistyczna wyszukiwarka obrazów odwrotnych.
+        Bardzo dobra do znajdowania oryginalnych źródeł.
+        """
+        offers = []
+        try:
+            url = "https://tineye.com/"
+            
+            offer = OnlineOffer(
+                title="👁️ TinEye - Znajdź oryginalne źródło obrazu",
+                url=url,
+                source="tineye",
+                seller="tineye.com",
+                description=f"TinEye specjalizuje się w znajdowaniu źródeł obrazów. Załaduj: {Path(image_path).name}",
+                timestamp=datetime.now().isoformat(),
+            )
+            offers.append(offer)
+            
+        except Exception as e:
+            print(f"⚠ Błąd TinEye: {e}")
+        
+        return offers
+    
+    def reverse_image_search_bing(self, image_path: str) -> List[OnlineOffer]:
+        """
+        Bing Visual Search - wyszukiwanie obrazem przez Microsoft.
+        """
+        offers = []
+        try:
+            url = "https://www.bing.com/visualsearch"
+            
+            offer = OnlineOffer(
+                title="🔵 Bing Visual Search - Wyszukaj podobne produkty",
+                url=url,
+                source="bing",
+                seller="bing.com",
+                description=f"Bing Visual Search często znajduje produkty do kupienia. Załaduj: {Path(image_path).name}",
+                timestamp=datetime.now().isoformat(),
+            )
+            offers.append(offer)
+            
+        except Exception as e:
+            print(f"⚠ Błąd Bing: {e}")
+        
+        return offers
+    
+    def reverse_image_search_aliexpress(self, image_path: str) -> List[OnlineOffer]:
+        """
+        AliExpress Image Search - wyszukaj produkt obrazem na AliExpress.
+        """
+        offers = []
+        try:
+            url = "https://www.aliexpress.com/wholesale"
+            
+            offer = OnlineOffer(
+                title="🇨🇳 AliExpress - Wyszukaj produkt obrazem",
+                url=url,
+                source="aliexpress_image",
+                seller="aliexpress.com",
+                description=f"Na stronie AliExpress kliknij ikonę aparatu i załaduj obraz: {Path(image_path).name}",
+                timestamp=datetime.now().isoformat(),
+            )
+            offers.append(offer)
+            
+        except Exception as e:
+            print(f"⚠ Błąd AliExpress Image: {e}")
+        
+        return offers
+    
+    def reverse_image_search_all(self, image_path: str) -> List[OnlineOffer]:
+        """
+        Wyszukaj obraz na wszystkich platformach reverse image search.
+        
+        Args:
+            image_path: Ścieżka do obrazu
+            
+        Returns:
+            Lista linków do platform wyszukiwania obrazem
+        """
+        all_offers = []
+        
+        print(f"\n🖼️ WYSZUKIWANIE ODWROTNE OBRAZEM")
+        print(f"📷 Obraz: {Path(image_path).name}")
+        print("=" * 50)
+        
+        # Google Lens
+        print("  🔍 Google Lens...", end=" ")
+        offers = self.reverse_image_search_google(image_path)
+        all_offers.extend(offers)
+        print(f"✓ ({len(offers)})")
+        
+        # Yandex
+        print("  🔎 Yandex Images...", end=" ")
+        offers = self.reverse_image_search_yandex(image_path)
+        all_offers.extend(offers)
+        print(f"✓ ({len(offers)})")
+        
+        # TinEye
+        print("  👁️ TinEye...", end=" ")
+        offers = self.reverse_image_search_tineye(image_path)
+        all_offers.extend(offers)
+        print(f"✓ ({len(offers)})")
+        
+        # Bing
+        print("  🔵 Bing Visual...", end=" ")
+        offers = self.reverse_image_search_bing(image_path)
+        all_offers.extend(offers)
+        print(f"✓ ({len(offers)})")
+        
+        # AliExpress
+        print("  🇨🇳 AliExpress...", end=" ")
+        offers = self.reverse_image_search_aliexpress(image_path)
+        all_offers.extend(offers)
+        print(f"✓ ({len(offers)})")
+        
+        print("=" * 50)
+        print(f"📊 Znaleziono {len(all_offers)} linków do wyszukiwania obrazem\n")
+        
+        return all_offers
 
     def search_all_platforms(
         self,
