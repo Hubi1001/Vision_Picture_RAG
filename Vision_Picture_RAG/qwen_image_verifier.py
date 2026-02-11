@@ -70,14 +70,49 @@ class QwenImageVerifier:
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         dtype = _select_dtype()
         self.processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
-        self.model = Qwen2VLForConditionalGeneration.from_pretrained(
-            model_id,
+        model_kwargs = dict(
             torch_dtype=dtype,
             device_map="auto" if self.device.startswith("cuda") else None,
             trust_remote_code=True,
+            low_cpu_mem_usage=True,
         )
+        if self.device.startswith("cuda"):
+            # Prefer faster attention implementations when available
+            try:
+                model_kwargs["attn_implementation"] = "flash_attention_2"
+                self.model = Qwen2VLForConditionalGeneration.from_pretrained(
+                    model_id,
+                    **model_kwargs,
+                )
+            except Exception:
+                model_kwargs.pop("attn_implementation", None)
+                try:
+                    model_kwargs["attn_implementation"] = "sdpa"
+                    self.model = Qwen2VLForConditionalGeneration.from_pretrained(
+                        model_id,
+                        **model_kwargs,
+                    )
+                except Exception:
+                    model_kwargs.pop("attn_implementation", None)
+                    self.model = Qwen2VLForConditionalGeneration.from_pretrained(
+                        model_id,
+                        **model_kwargs,
+                    )
+        else:
+            self.model = Qwen2VLForConditionalGeneration.from_pretrained(
+                model_id,
+                **model_kwargs,
+            )
         if not self.device.startswith("cuda"):
             self.model = self.model.to(self.device)
+        self.model.eval()
+        
+        # torch.compile dla PyTorch 2.0+ (przyspieszenie inferencji)
+        if self.device.startswith("cuda") and hasattr(torch, "compile") and torch.__version__ >= "2.0":
+            try:
+                self.model = torch.compile(self.model, mode="reduce-overhead", fullgraph=False)
+            except Exception:
+                pass  # Ignore compile errors, fallback to eager mode
 
     def _build_messages(self, image: Image.Image, claim: str):
         return [
@@ -126,6 +161,12 @@ class QwenImageVerifier:
 
         output_ids = generated_ids[:, inputs["input_ids"].shape[1]:]
         output_text = self.processor.batch_decode(output_ids, skip_special_tokens=True)[0].strip()
+
+        # Zwolnij pamięć GPU po inferencji
+        del inputs, generated_ids, output_ids
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
         return _parse_output(output_text)
 
 
