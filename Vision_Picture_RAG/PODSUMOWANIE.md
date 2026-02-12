@@ -148,6 +148,116 @@ print(decision)
 
 ---
 
+## Zadanie 6: Algorytmy obsługujące pełny proces produkcyjny
+
+### Realizacja:
+production_process_workflow.py - modul orkestracji procesu produkcyjnego od materiału do wyrobu gotowego (585 linii)
+
+Architektura procesu (7 etapów):
+
+1. INPUT - Recepcja materiału/zlecenia
+   - Inicjalizacja PartJob z metadanymi
+   - Status: RECEIVED
+
+2. SCAN - Skanowanie 3D lub analiza obrazu  
+   - Weryfikacja jakości: scan_quality >= 0.6
+   - Wariant: Jeśli FAIL → RESCAN
+
+3. IDENTIFY - Identyfikacja i klasyfikacja
+   - Porównanie z bazą (scanner_3d_comparator)
+   - Weryfikacja pewności: confidence >= 0.65
+   - Wariant: Jeśli FAIL → MANUAL_REVIEW
+
+4. ROUTE - Routing i planowanie obróbki
+   - RoutingEngine: kategoria + materiał → maszyna + program
+   - 4 kategorie: fasteners, bearings, shafts, plates
+   - Współczynniki materiałowe: steel, stainless, aluminum
+   - Status: ROUTING
+
+5. MACHINE - Obróbka na maszynach CNC
+   - Uruchomienie programu z wyznaczonymi parametrami
+   - Monitoring i rejestracja procesu
+   - Status: MACHINING
+
+6. QC - Kontrola Jakości
+   - Decision tree: PASS / FAIL_MINOR / FAIL_MAJOR / SCRAP
+   - Warianty: PASS → DONE, FAIL → REWORK, SCRAP → REJECTED
+
+7. ARCHIVE - Archiwizacja i rejestracja
+   - Zapis w production_repository
+   - Historia etapów, decyzje, metadane
+   - Status: DONE
+
+Warianty i branchowanie:
+- RESCAN: Jeśli scan_quality < 0.6
+- MANUAL_REVIEW: Jeśli confidence < 0.65
+- REWORK: Jeśli QC zwróci FAIL_MINOR/MAJOR
+- SCRAP: Jeśli QC zwróci SCRAP
+
+Komponenty:
+
+1. Enums & Dataclasses
+   - ProcessStage: 7 etapów
+   - PartStatus: RECEIVED, PENDING_RESCAN, PENDING_MANUAL_REVIEW, MACHINING, PENDING_REWORK, DONE, REJECTED
+   - QCResult: PASS, FAIL_MINOR, FAIL_MAJOR, SCRAP
+   - PartJob: Całe życie części z stage_history
+   - ProcessResult: (success, stage, message, metadata)
+
+2. RoutingEngine
+   - Reguły routingu dla 4 kategorii × materiałów
+   - Zwraca: (machine, program, qc_rules)
+   - Współczynniki złożoności materiału
+
+3. StageExecutors (Strategy Pattern)
+   - InputStageExecutor, ScanStageExecutor, IdentifyStageExecutor
+   - RouteStageExecutor, MachineStageExecutor, QCStageExecutor, ArchiveStageExecutor
+   - Każdy implementuje run() z validacją i error handling
+
+4. ProductionWorkflowEngine
+   - process_part(part_job): Main orchestrator
+   - Sekwencja etapów, walidacja, branchowanie
+   - Logging w stage_history
+   - Async-ready dla przyszłej współbieżności
+
+Integracje:
+- Punkt 5 (Decision Engine) → Metadane w INPUT
+- scanner_3d_comparator → IDENTIFY stage
+- production_repository → ARCHIVE stage
+- qwen_image_verifier → QC stage
+
+Plik:
+- Vision_Picture_RAG/Vision_Picture_RAG/production_process_workflow.py
+
+Przyklad uzycia:
+
+from production_process_workflow import (
+    ProductionWorkflowEngine, PartJob, ProcessStage, PartStatus
+)
+import asyncio
+
+# Tworzenie nowej części do przetworzenia
+part_job = PartJob(
+    part_id="PART-2024-001",
+    material="stainless_steel",
+    part_name="Precision fastener M8",
+    category="fasteners",
+    source_text="Szukam precyzyjnego mocowania M8 ze stali nierdzewnej",
+    scan_data={"scan_quality": 0.95, "point_cloud_path": "/data/scan.pcd"}
+)
+
+# Orkestracja procesu
+engine = ProductionWorkflowEngine()
+result = asyncio.run(engine.process_part(part_job))
+
+# Wynik
+print(result.success)  # True
+print(part_job.current_status)  # PartStatus.DONE
+print(len(part_job.stage_history))  # 7 przejść
+for transition in part_job.stage_history:
+    print(f"{transition.from_stage.value} → {transition.to_stage.value}")
+
+---
+
 ## Dokumentacja dodatkowa
 
 IMPLEMENTACJA_RAG.md
