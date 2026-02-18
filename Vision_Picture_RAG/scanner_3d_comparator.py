@@ -50,6 +50,29 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 
+
+def _default_models_db_path() -> str:
+    """Domyślna ścieżka do bazy modeli 3D (obok tego modułu)."""
+    return str(Path(__file__).resolve().parent / "models_3d.db")
+
+
+def _resolve_models_db_path(db_path: Optional[str]) -> str:
+    """
+    Rozwiąż ścieżkę bazy modeli 3D do postaci absolutnej.
+
+    Zasady:
+    - jeśli db_path nie podano -> użyj domyślnej bazy projektu,
+    - jeśli podano ścieżkę względną -> przelicz względem bieżącego katalogu,
+    - jeśli podano absolutną -> użyj bez zmian.
+    """
+    if not db_path:
+        return _default_models_db_path()
+
+    p = Path(db_path)
+    if p.is_absolute():
+        return str(p)
+    return str(p.resolve())
+
 # ============================================================================
 # 1. DESKRYPTOR GEOMETRYCZNY MODELU 3D
 # ============================================================================
@@ -153,7 +176,7 @@ class Model3DDescriptor:
 
     def to_global_feature_vector(self) -> np.ndarray:
         """
-        Wektor cech globalnych (8D) — do szybkiego dopasowania klas kształtów.
+        Wektor cech globalnych (10D) — do szybkiego dopasowania klas kształtów.
         Skuteczniejszy niż pełny wektor do wstępnego przesiewu.
         """
         bb = sorted(self.bounding_box, reverse=True)
@@ -169,10 +192,23 @@ class Model3DDescriptor:
         else:
             eigs_norm = [0, 0, 0]
 
+        # Volume fill ratio (jak dużo bounding box jest wypełnione)
+        bb_vol = bb[0] * bb[1] * bb[2] if len(bb) >= 3 and bb[0] > 0 else 0
+        fill_ratio = min(self.volume / bb_vol, 1.0) if bb_vol > 0 else 0.0
+
+        # Surface-to-volume ratio (znormalizowany; wyższy = bardziej drążony)
+        if self.volume > 0:
+            sv_ratio = self.surface_area / (self.volume ** (2.0 / 3.0))
+            sv_ratio = min(sv_ratio / 20.0, 1.0)  # normalizacja do ~[0,1]
+        else:
+            sv_ratio = 0.0
+
         features = [
             self.compactness,
             self.sphericity,
             self.elongation,
+            fill_ratio,
+            sv_ratio,
             bb_ratios[0],
             bb_ratios[1],
             eigs_norm[0],
@@ -297,9 +333,9 @@ class Model3DDatabase:
         results = db.search(query_descriptor, top_k=5)
     """
 
-    def __init__(self, db_path: str = "models_3d.db"):
-        self.db_path = db_path
-        self.engine = create_engine(f"sqlite:///{db_path}", echo=False)
+    def __init__(self, db_path: Optional[str] = None):
+        self.db_path = _resolve_models_db_path(db_path)
+        self.engine = create_engine(f"sqlite:///{self.db_path}", echo=False)
         Base3D.metadata.create_all(self.engine)
         self.SessionLocal = sessionmaker(bind=self.engine)
 
@@ -397,15 +433,36 @@ class Model3DDatabase:
                 db_global = desc.to_global_feature_vector()
                 db_hist = desc.to_histogram_vector()
 
-                # Euclidean distance na global features (lepiej rozróżnia proporcje)
+                # Gaussian kernel na global features (ostrzejsza dyskryminacja)
                 global_dist = np.linalg.norm(query_global - db_global)
-                global_sim = 1.0 / (1.0 + global_dist * 5)
+                global_sim = float(np.exp(-(global_dist ** 2) / 0.08))
 
-                # Cosine similarity na histogramach (lepsza dla rozkładów)
+                # Cosine similarity na histogramach (D2+A3 łącznie)
                 hist_sim = self._cosine_similarity(query_hist, db_hist)
 
-                # Composite score: global features matter more for shape class
-                score = 0.7 * global_sim + 0.3 * hist_sim
+                # Chi-squared similarity na D2 (dystrybucja odległości par)
+                d2_q = np.array(query_descriptor.d2_histogram or [0]*64, dtype=np.float64)
+                d2_d = np.array(desc.d2_histogram or [0]*64, dtype=np.float64)
+                d2_q_s = d2_q / (d2_q.sum() + 1e-12)
+                d2_d_s = d2_d / (d2_d.sum() + 1e-12)
+                d2_chi2 = 0.5 * float(np.sum((d2_q_s - d2_d_s)**2 / (d2_q_s + d2_d_s + 1e-12)))
+                d2_sim = float(np.exp(-d2_chi2 * 2))
+
+                # Chi-squared similarity na A3 (dystrybucja kątów trójek)
+                a3_q = np.array(query_descriptor.a3_histogram or [0]*64, dtype=np.float64)
+                a3_d = np.array(desc.a3_histogram or [0]*64, dtype=np.float64)
+                a3_q_s = a3_q / (a3_q.sum() + 1e-12)
+                a3_d_s = a3_d / (a3_d.sum() + 1e-12)
+                a3_chi2 = 0.5 * float(np.sum((a3_q_s - a3_d_s)**2 / (a3_q_s + a3_d_s + 1e-12)))
+                a3_sim = float(np.exp(-a3_chi2 * 2))
+
+                # Composite: histogramy ważniejsze (więcej info o kształcie)
+                score = (
+                    0.15 * global_sim
+                    + 0.20 * hist_sim
+                    + 0.35 * d2_sim
+                    + 0.30 * a3_sim
+                )
 
                 results.append((desc, float(score)))
 
@@ -953,32 +1010,20 @@ def extract_descriptor_from_file(
     if extra_points is not None and len(extra_points) > 0:
         points = np.vstack([points, extra_points])
 
+    # ---- Pipeline identyczny ze skanerem (downsample → normalize) ----
+    # Gwarantuje, że deskryptory z bazy i ze skanera są porównywalne.
     processor = ScannerDataProcessor(verbose=False)
     processor.points = points
     processor.source_path = str(filepath)
+    processor.downsample(target_points=5000)
+    processor.normalize()
 
     desc = processor.extract_descriptor(model_id=model_id, model_name=model_name)
 
-    # Nadpisz danymi z mesha (dokładniejsze niż z convex hull)
-    if mesh.is_watertight:
-        desc.volume = float(mesh.volume)
-    desc.surface_area = float(mesh.area)
-    desc.num_vertices = len(mesh.vertices)
-    desc.num_faces = len(mesh.faces)
-    desc.file_path = str(filepath)
-    desc.category = category
-    desc.material = material
-    desc.tags = tags or []
-    desc.source = "cad"
-
-    # Bounding box z mesha
+    # Nadpisz proporcje wymiarowe danymi z mesha (scale-invariant, dokładniejsze)
+    # bb_ratios i inertia_ratios są niezależne od skali → bezpieczne do nadpisania
     bb = mesh.bounding_box.extents
     desc.bounding_box = bb.tolist()
-
-    # Centroid z mesha
-    desc.centroid = mesh.centroid.tolist()
-
-    # Inertia z mesha
     try:
         inertia = mesh.moment_inertia
         eigenvalues = np.sort(np.linalg.eigvalsh(inertia))[::-1]
@@ -988,7 +1033,16 @@ def extract_descriptor_from_file(
     except Exception:
         pass
 
-    # Hash
+    # Metadane z mesha (informacyjne — nie wpływają na matching)
+    desc.num_vertices = len(mesh.vertices)
+    desc.num_faces = len(mesh.faces)
+    desc.file_path = str(filepath)
+    desc.category = category
+    desc.material = material
+    desc.tags = tags or []
+    desc.source = "cad"
+
+    # Hash z oryginalnej geometrii mesha
     desc.model_hash = hashlib.sha256(
         np.round(mesh.vertices, 4).tobytes()
     ).hexdigest()
@@ -1153,14 +1207,15 @@ class Model3DComparator:
             # Final score = weighted combination
             # Deskryptor jest bardziej wiarygodny dla klasyfikacji kształtu,
             # ICP/Hausdorff/Chamfer weryfikują dopasowanie geometrii
-            desc_weight = 0.50
-            icp_weight = 0.20
-            hd_weight = 0.10
+            desc_weight = 0.60
+            icp_weight = 0.15
+            hd_weight = 0.05
             cd_weight = 0.20
 
-            icp_score = max(0, 1.0 - icp_result["rmse"] * 3)
-            hd_score = max(0, 1.0 - hd * 1.5)
-            cd_score = max(0, 1.0 - cd * 5)
+            # Gaussian-based konwersja — ostrzejsza dyskryminacja
+            icp_score = float(np.exp(-icp_result["rmse"] * 10))
+            hd_score = float(np.exp(-hd * 3))
+            cd_score = float(np.exp(-cd * 8))
 
             final_score = (
                 desc_weight * coarse_score
@@ -1338,7 +1393,7 @@ class Model3DComparator:
         source: np.ndarray,
         target: np.ndarray,
         max_iterations: int = 50,
-        n_orientations: int = 4,
+        n_orientations: int = 8,
     ) -> Dict[str, Any]:
         """
         Multi-start ICP — próbuje kilka początkowych orientacji
@@ -1347,11 +1402,23 @@ class Model3DComparator:
         Rozwiązuje problem ambiguity PCA (flip/rotate).
         4 orientacje: identity + 3 obroty 180° wokół osi głównych.
         """
+        # 90° obroty wokół osi
+        _c, _s = 0.0, 1.0  # cos(90°), sin(90°)
+        R90z = np.array([[_c, -_s, 0], [_s, _c, 0], [0, 0, 1]])
+        R90y = np.array([[_c, 0, _s], [0, 1, 0], [-_s, 0, _c]])
+        R90x = np.array([[1, 0, 0], [0, _c, -_s], [0, _s, _c]])
+        _c45, _s45 = np.cos(np.pi/4), np.sin(np.pi/4)
+        R45z = np.array([[_c45, -_s45, 0], [_s45, _c45, 0], [0, 0, 1]])
+
         rotations = [
             np.eye(3),                                    # identity
             np.diag([-1, -1,  1]),                        # 180° wokół Z
             np.diag([-1,  1, -1]),                        # 180° wokół Y
             np.diag([ 1, -1, -1]),                        # 180° wokół X
+            R90z,                                         # 90° wokół Z
+            R90y,                                         # 90° wokół Y
+            R90x,                                         # 90° wokół X
+            R45z,                                         # 45° wokół Z
         ]
 
         best_result = None
@@ -1498,7 +1565,7 @@ class Model3DComparator:
 
 def generate_demo_3d_models(
     output_dir: str = "demo_3d_models",
-    db_path: str = "models_3d.db",
+    db_path: Optional[str] = None,
 ) -> Model3DDatabase:
     """
     Generuje zestaw demonstracyjnych modeli 3D (parametrycznych)
@@ -2013,7 +2080,7 @@ def generate_identification_report(
 
 def identify_from_scan(
     scan_source,
-    db_path: str = "models_3d.db",
+    db_path: Optional[str] = None,
     top_k: int = 5,
     category_filter: Optional[str] = None,
     verbose: bool = True,
